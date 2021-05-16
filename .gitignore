@@ -1,0 +1,6 @@
+# metric
+*.npy
+
+# ckpt and metric
+/ckpt
+/matrix
