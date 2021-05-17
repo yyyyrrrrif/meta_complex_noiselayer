@@ -207,6 +207,7 @@ class MetaMachine(MetaModule):
         return TM
 
 def adjust_learning_rate(optimizer, epochs):
+    # lr = args.lr * ((0.1 ** int(epochs >= 60)) * (0.1 ** int(epochs >= 80))) # For WRN-28-10
     lr = args.lr * ((0.1 ** int(epochs >= 80)) * (0.1 ** int(epochs >= 100))) # For WRN-28-10
     #lr = args.lr * ((0.1 ** int(iters >= 20000)) * (0.1 ** int(iters >= 25000))) # For ResNet32
     # log to TensorBoard
@@ -295,37 +296,38 @@ def train(train_loader, train_meta_loader, model, meta_machine, optimizer_a, opt
 
     train_meta_loader_iter = iter(train_meta_loader)
     for batch_idx, (inputs, targets) in enumerate(train_loader):
-        model.train()
-        inputs, targets = inputs.to(device), targets.to(device)
+        if batch_idx % 10 == 0:
+            #========meta part=========
+            model.train()
+            inputs, targets = inputs.to(device), targets.to(device)
 
-        #========meta part=========
-        meta_model = build_model().cuda()
-        meta_model.load_state_dict(model.state_dict())
-        outputs, outputs_meta = meta_model(inputs)
+            meta_model = build_model().cuda()
+            meta_model.load_state_dict(model.state_dict())
+            outputs, outputs_meta = meta_model(inputs)
 
-        TM = meta_machine(outputs_meta)
+            TM = meta_machine(outputs_meta)
 
-        l_f_meta = forward_loss(outputs, targets, TM)
-        meta_model.zero_grad()
-        grads = torch.autograd.grad(l_f_meta, (meta_model.params()), create_graph=True)
-        meta_lr = args.lr * ((0.1 ** int(epoch >= 80)) * (0.1 ** int(epoch >= 100))) # For ResNet32
-        meta_model.update_params(lr_inner=meta_lr, source_params=grads)
-        del grads
+            l_f_meta = forward_loss(outputs, targets, TM)
+            meta_model.zero_grad()
+            grads = torch.autograd.grad(l_f_meta, (meta_model.params()), create_graph=True)
+            meta_lr = args.lr * ((0.1 ** int(epoch >= 80)) * (0.1 ** int(epoch >= 100))) # For ResNet32
+            meta_model.update_params(lr_inner=meta_lr, source_params=grads)
+            del grads
 
-        try:
-            inputs_val, targets_val = next(train_meta_loader_iter)
-        except StopIteration:
-            train_meta_loader_iter = iter(train_meta_loader)
-            inputs_val, targets_val = next(train_meta_loader_iter)
-        inputs_val, targets_val = inputs_val.to(device), targets_val.to(device)
-        y_g_hat, _ = meta_model(inputs_val)
-        l_g_meta = F.cross_entropy(y_g_hat, targets_val)
-        prec_meta = accuracy(y_g_hat.data, targets_val.data, topk=(1,))[0]
-        meta_loss += l_g_meta.item()
+            try:
+                inputs_val, targets_val = next(train_meta_loader_iter)
+            except StopIteration:
+                train_meta_loader_iter = iter(train_meta_loader)
+                inputs_val, targets_val = next(train_meta_loader_iter)
+            inputs_val, targets_val = inputs_val.to(device), targets_val.to(device)
+            y_g_hat, _ = meta_model(inputs_val)
+            l_g_meta = F.cross_entropy(y_g_hat, targets_val)
+            prec_meta = accuracy(y_g_hat.data, targets_val.data, topk=(1,))[0]
+            meta_loss += l_g_meta.item()
 
-        optimizer_vnet.zero_grad()
-        l_g_meta.backward()
-        optimizer_vnet.step()
+            optimizer_vnet.zero_grad()
+            l_g_meta.backward()
+            optimizer_vnet.step()
 
         # ==========training part==================
         outputs, outputs_meta = model(inputs)
